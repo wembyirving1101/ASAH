@@ -1,0 +1,146 @@
+'use client'
+
+import { useMemo, useState } from 'react'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bot, Brain, Check, ChevronDown, CircleHelp, Crosshair, Flame, Home, Minus, Move, PanelBottom, Plus, Search, Sparkles, Target, UserRound, X, Zap } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+
+type SkillStatus = 'mastered' | 'proficient' | 'learning' | 'needs' | 'assessed'
+type SkillType = 'Quantitative' | 'Verbal' | 'Reasoning' | 'Literacy'
+type UTBKDomain = 'Overall' | 'PPU' | 'PBM' | 'PK' | 'PU' | 'LBI' | 'LBE' | 'PM'
+type SkillNode = { id: string; name: string; short?: string; status: SkillStatus; type: SkillType[]; progress: number; domains: UTBKDomain[]; description?: string; practice: string; usedIn: string; direction: string }
+type SkillEdge = { id: string; source: string; target: string }
+type PositionedNode = SkillNode & { x: number; y: number }
+const parentIds = ['verbal', 'quant', 'reasoning', 'literacy'] as const
+const branchOrder = { verbal: 'left', quant: 'down', reasoning: 'right', literacy: 'up' } as const
+const nodeSize = { parent: 126, childWidth: 138, childHeight: 74, root: 180 }
+
+function layoutGraph(source: SkillNode[], edges: SkillEdge[]): { nodes: PositionedNode[]; connections: SkillEdge[] } {
+  const root: PositionedNode = { ...source.find((node) => node.id === 'root')!, x: 600, y: 410 }
+  const parents = source.filter((node) => parentIds.includes(node.id as typeof parentIds[number]))
+  const positioned: PositionedNode[] = [root]
+  const domainGap = 260
+  const centers = { verbal: { x: 340, y: root.y }, quant: { x: root.x, y: 670 }, reasoning: { x: 860, y: root.y }, literacy: { x: root.x, y: 150 } }
+  const childrenByParent = new Map<string, SkillNode[]>()
+  edges.forEach((edge) => { const child = source.find((node) => node.id === edge.target); if (child) childrenByParent.set(edge.source, [...(childrenByParent.get(edge.source) ?? []), child]) })
+  const placedIds = new Set<string>(['root', ...parents.map((parent) => parent.id)])
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+  const placeBranch = (node: SkillNode, x: number, y: number, direction: keyof typeof branchOrder, depth: number, bounds: { left: number; right: number; top: number; bottom: number }) => {
+    if (placedIds.has(node.id)) return
+    placedIds.add(node.id)
+    const safeX = clamp(x, bounds.left + 72, bounds.right - 72)
+    const safeY = clamp(y, bounds.top + 40, bounds.bottom - 40)
+    positioned.push({ ...node, x: safeX, y: safeY })
+    const children = childrenByParent.get(node.id) ?? []
+    if (!children.length) return
+    const span = direction === 'left' || direction === 'right' ? bounds.bottom - bounds.top : bounds.right - bounds.left
+    const gap = Math.max(88, Math.min(150, span / Math.max(children.length, 1)))
+    const start = (children.length - 1) * gap / 2
+    children.forEach((child, index) => {
+      const cross = index * gap - start
+      const childX = direction === 'left' ? safeX - 170 : direction === 'right' ? safeX + 170 : safeX + cross
+      const childY = direction === 'up' ? safeY - 120 : direction === 'down' ? safeY + 120 : safeY + cross
+      placeBranch(child, childX, childY, direction, depth + 1, bounds)
+    })
+  }
+  parents.forEach((parent) => {
+    const center = centers[parent.id as keyof typeof centers]
+    positioned.push({ ...parent, x: center.x, y: center.y })
+    const direction = branchOrder[parent.id as keyof typeof branchOrder]
+    const bounds = direction === 'left' ? { left: 24, right: 470, top: 180, bottom: 640 } : direction === 'right' ? { left: 730, right: 1176, top: 180, bottom: 640 } : direction === 'up' ? { left: 380, right: 820, top: 24, bottom: 280 } : { left: 380, right: 820, top: 540, bottom: 976 }
+    const children = childrenByParent.get(parent.id) ?? []
+    const span = direction === 'left' || direction === 'right' ? bounds.bottom - bounds.top : bounds.right - bounds.left
+    const gap = Math.max(88, Math.min(150, span / Math.max(children.length, 1)))
+    const start = (children.length - 1) * gap / 2
+    children.forEach((child, index) => { const cross = index * gap - start; placeBranch(child, direction === 'left' ? center.x - 170 : direction === 'right' ? center.x + 170 : center.x + cross, direction === 'up' ? center.y - 120 : direction === 'down' ? center.y + 120 : center.y + cross, direction, 1, bounds) })
+  })
+  const connections = edges.filter((edge) => positioned.some((node) => node.id === edge.source) && positioned.some((node) => node.id === edge.target))
+  return { nodes: positioned, connections }
+}
+
+const statusMeta: Record<SkillStatus, { label: string; color: string; icon: typeof Check }> = {
+  mastered: { label: 'Mastered', color: 'cyan', icon: Sparkles },
+  proficient: { label: 'Proficient', color: 'green', icon: Check },
+  learning: { label: 'Learning', color: 'blue', icon: Zap },
+  needs: { label: 'Needs work', color: 'orange', icon: Flame },
+  assessed: { label: 'Not assessed', color: 'slate', icon: CircleHelp },
+}
+
+const nodes: SkillNode[] = [
+  { id: 'root', name: 'UTBK CORE', status: 'mastered', type: ['Reasoning'], progress: 76, domains: ['Overall'], practice: '298 questions · 84% accuracy', usedIn: 'All domains', direction: 'Your foundation' },
+  { id: 'verbal', name: 'Verbal', status: 'proficient', type: ['Verbal', 'Literacy'], progress: 81, domains: ['PBM', 'LBI', 'LBE'], practice: '74 questions · 79% accuracy', usedIn: 'PBM · LBI · LBE', direction: 'Left branch' },
+  { id: 'quant', name: 'Kuantitatif', status: 'learning', type: ['Quantitative', 'Reasoning'], progress: 68, domains: ['PK', 'PM', 'PU'], practice: '143 questions · 78% accuracy', usedIn: 'PK · PM · PU', direction: 'Down branch' },
+  { id: 'reasoning', name: 'Penalaran', status: 'proficient', type: ['Reasoning'], progress: 86, domains: ['PU', 'PM'], practice: '91 questions · 88% accuracy', usedIn: 'PU · PM', direction: 'Right branch' },
+  { id: 'literacy', name: 'Literasi', status: 'needs', type: ['Literacy', 'Verbal'], progress: 54, domains: ['LBI', 'LBE'], practice: '86 questions · 62% accuracy', usedIn: 'LBI · LBE', direction: 'Up branch' },
+  { id: 'inference', name: 'Inference', status: 'mastered', type: ['Literacy', 'Reasoning'], progress: 91, domains: ['PBM', 'LBI', 'LBE'], practice: '48 questions · 92% accuracy', usedIn: 'PBM · LBI · LBE', direction: 'Verbal skill' },
+  { id: 'argument', name: 'Argument\nevaluation', status: 'learning', type: ['Literacy', 'Verbal', 'Reasoning'], progress: 64, domains: ['PBM', 'LBI'], practice: '32 questions · 71% accuracy', usedIn: 'PBM · LBI', direction: 'Verbal skill' },
+  ...['Makna Kata', 'Frasa', 'EYD', 'Konjungsi', 'Pergeseran Makna', 'Diksi', 'Sinonim', 'Antonim', 'Ketepatan Diksi', 'Rujukan Kata', 'Klausa', 'Struktur Kalimat', 'Kalimat Tunggal', 'Kalimat Majemuk', 'Kalimat Aktif', 'Kalimat Pasif', 'Kalimat Efektif', 'Kepaduan Kalimat', 'Koherensi Paragraf', 'Ide Pokok', 'Paragraf Deduktif', 'Paragraf Induktif', 'Makna Leksikal', 'Makna Gramatikal', 'Makna Denotatif', 'Makna Konotatif', 'Endosentrik', 'Eksosentrik', 'Huruf Kapital', 'Huruf Miring', 'Imbuhan vs Kata Depan', 'Kata Baku', 'Tanda Baca'].map((name, index) => ({ id: name.toLowerCase().replaceAll(' ', '-'), name, status: (index % 3 === 0 ? 'proficient' : 'assessed') as SkillStatus, type: ['Verbal'] as SkillType[], progress: index % 3 === 0 ? 72 : 0, domains: ['LBI'] as UTBKDomain[], practice: index % 3 === 0 ? '20 questions · 78% accuracy' : 'Not started', usedIn: 'LBI', direction: 'Verbal skill' })),
+  { id: 'equations', name: 'Number', status: 'needs', type: ['Quantitative'], progress: 48, domains: ['PK', 'PM'], practice: '57 questions · 55% accuracy', usedIn: 'PK · PM', direction: 'Quant skill' },
+  { id: 'data', name: 'Geometri', status: 'assessed', type: ['Quantitative', 'Reasoning'], progress: 0, domains: ['PK', 'PM', 'PU'], practice: '39 questions · 73% accuracy', usedIn: 'PK · PM · PU', direction: 'Quant skill' },
+  { id: 'patterns', name: 'Pattern\nrecognition', status: 'proficient', type: ['Reasoning'], progress: 83, domains: ['PU', 'PM'], practice: '41 questions · 86% accuracy', usedIn: 'PU · PM', direction: 'Reasoning skill' },
+  { id: 'main-idea', name: 'Main idea', status: 'needs', type: ['Literacy', 'Verbal'], progress: 52, domains: ['LBI', 'LBE'], practice: '38 questions · 61% accuracy', usedIn: 'LBI · LBE', direction: 'Literacy skill' },
+  { id: 'integration', name: 'Information\nintegration', status: 'assessed', type: ['Literacy', 'Reasoning'], progress: 0, domains: ['LBI', 'LBE'], practice: 'Not started', usedIn: 'LBI · LBE', direction: 'Literacy skill' },
+]
+
+const edges: SkillEdge[] = [
+  ...parentIds.map((id) => ({ id: `edge-root-${id}`, source: 'root', target: id })),
+  { id: 'edge-verbal-inference', source: 'verbal', target: 'inference' }, { id: 'edge-verbal-argument', source: 'verbal', target: 'argument' },
+  ...[['verbal', 'makna-kata'], ['verbal', 'frasa'], ['verbal', 'eyd'], ['verbal', 'konjungsi'], ['makna-kata', 'makna-leksikal'], ['makna-kata', 'makna-gramatikal'], ['makna-kata', 'makna-denotatif'], ['makna-kata', 'makna-konotatif'], ['makna-kata', 'pergeseran-makna'], ['makna-kata', 'diksi'], ['diksi', 'sinonim'], ['diksi', 'antonim'], ['diksi', 'ketepatan-diksi'], ['diksi', 'rujukan-kata'], ['frasa', 'endosentrik'], ['frasa', 'eksosentrik'], ['frasa', 'klausa'], ['klausa', 'struktur-kalimat'], ['struktur-kalimat', 'kalimat-tunggal'], ['struktur-kalimat', 'kalimat-majemuk'], ['struktur-kalimat', 'kalimat-aktif'], ['struktur-kalimat', 'kalimat-pasif'], ['eyd', 'kalimat-efektif'], ['diksi', 'kalimat-efektif'], ['struktur-kalimat', 'kalimat-efektif'], ['konjungsi', 'kalimat-efektif'], ['kalimat-efektif', 'kepaduan-kalimat'], ['kepaduan-kalimat', 'koherensi-paragraf'], ['ide-pokok', 'paragraf-deduktif'], ['ide-pokok', 'paragraf-induktif'], ['koherensi-paragraf', 'paragraf-deduktif'], ['koherensi-paragraf', 'paragraf-induktif'], ['eyd', 'huruf-kapital'], ['eyd', 'huruf-miring'], ['eyd', 'imbuhan-vs-kata-depan'], ['eyd', 'kata-baku'], ['eyd', 'tanda-baca']].map(([source, target], index) => ({ id: `edge-verbal-${index}`, source, target })),
+  { id: 'edge-quant-equations', source: 'quant', target: 'equations' }, { id: 'edge-quant-data', source: 'quant', target: 'data' },
+  { id: 'edge-reasoning-patterns', source: 'reasoning', target: 'patterns' }, { id: 'edge-literacy-main-idea', source: 'literacy', target: 'main-idea' }, { id: 'edge-literacy-integration', source: 'literacy', target: 'integration' },
+]
+
+
+const filters = ['Overall', 'PPU', 'PBM', 'PK', 'LBI', 'LBE', 'PM']
+const types = ['All Types', 'Quantitative', 'Verbal', 'Reasoning', 'Literacy']
+
+function NodeCard({ node, selected, onClick, recommended }: { node: PositionedNode; selected: boolean; onClick: () => void; recommended: boolean }) {
+  const meta = statusMeta[node.status]
+  const Icon = meta.icon
+  return <button onClick={onClick} className={`skill-node node-${meta.color} ${node.id === 'root' ? 'root-node' : ['verbal', 'quant', 'reasoning', 'literacy'].includes(node.id) ? 'parent-node' : 'child-node'} ${selected ? 'selected' : ''} ${recommended ? 'recommended' : ''}`} style={{ left: node.x, top: node.y }} aria-label={node.id === 'root' ? 'View your learning profile' : `View ${node.name.replace('\n', ' ')}`}>
+    {node.id === 'root' ? <><span className="root-avatar" aria-hidden="true"><img src="/profile-avatar.png" alt="" /></span><span className="node-name">Your learning profile</span></> : <><span className="node-icon"><Icon /></span><span className="node-name">{node.name.split('\n').map((line) => <span key={line}>{line}</span>)}</span></>}
+    {node.progress ? <span className="node-score">{node.progress}% proficiency</span> : <span className="node-score muted-score">Not assessed</span>}
+  </button>
+}
+
+export function SkillTreePage() {
+  const [selected, setSelected] = useState<SkillNode | null>(null)
+  const [domain, setDomain] = useState('Overall')
+  const [type, setType] = useState('All Types')
+  const [search, setSearch] = useState('')
+  const [recommended, setRecommended] = useState(false)
+  const [scale, setScale] = useState(0.78)
+  const [offset, setOffset] = useState({ x: 0, y: 0 })
+  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null)
+  const graph = useMemo(() => layoutGraph(nodes, edges), [domain, type, search])
+  const filteredNodes = useMemo(() => { const matches = graph.nodes.filter((node) => (!search || node.name.toLowerCase().includes(search.toLowerCase())) && (type === 'All Types' || node.type.includes(type as SkillType)) && (domain === 'Overall' || node.domains.includes(domain as UTBKDomain))); const keep = new Set(matches.map((node) => node.id)); graph.connections.forEach((edge) => { if (keep.has(edge.source) || keep.has(edge.target)) { keep.add(edge.source); keep.add(edge.target) } }); return graph.nodes.filter((node) => keep.has(node.id)) }, [graph, search, type, domain])
+  const visible = new Set(filteredNodes.map((node) => node.id))
+
+  const updateZoom = (delta: number) => setScale((value) => Math.min(1.16, Math.max(0.56, value + delta)))
+  const resetView = () => { setScale(0.78); setOffset({ x: 0, y: 0 }) }
+
+  return <div className="app-shell">
+    <aside className="sidebar"><div className="brand-mark"><span>u</span><div><strong>UTBK</strong><small>JOURNEY</small></div></div><nav><NavItem icon={Home} label="Home" /><NavItem icon={Target} label="Skills" active /><NavItem icon={Zap} label="Drill" /><NavItem icon={Bot} label="AI Coach" /></nav><div className="sidebar-bottom"><NavItem icon={UserRound} label="Profile" /><p className="sidebar-caption">Keep building<br />your edge.</p></div></aside>
+    <main className="page-content">
+      <header className="page-header"><div><div className="eyebrow"><span className="live-dot" /> YOUR LEARNING MAP</div><h1>Skill Tree</h1><p>See what you actually know.</p></div><div className="header-actions"><button className="streak"><Flame /> 12 <span>day streak</span></button><button className="avatar">AR</button></div></header>
+      <section className="toolbar"><div className="select-row"><label>DOMAIN <select value={domain} onChange={(e) => setDomain(e.target.value)}>{filters.map((filter) => <option key={filter}>{filter}</option>)}</select><ChevronDown /></label><label className="desktop-filter">TYPE <select value={type} onChange={(e) => setType(e.target.value)}>{types.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown /></label><button className={`recommend-button ${recommended ? 'active' : ''}`} onClick={() => setRecommended(!recommended)}><Sparkles /> Recommended path</button></div><label className="search-box"><Search /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search skills..." /><kbd>⌘ K</kbd></label></section>
+      <section className="tree-section"><div className="tree-title"><div><span className="eyebrow">THE BIG PICTURE</span><h2>Explore your foundations</h2></div><div className="legend">{(['learning', 'assessed', 'needs', 'proficient', 'mastered'] as SkillStatus[]).map((status) => <span key={status}><i className={`legend-dot dot-${statusMeta[status].color}`} />{statusMeta[status].label}</span>)}</div></div>
+        <div className="tree-viewport" onPointerDown={(e) => setDrag({ x: e.clientX - offset.x, y: e.clientY - offset.y })} onPointerMove={(e) => drag && setOffset({ x: e.clientX - drag.x, y: e.clientY - drag.y })} onPointerUp={() => setDrag(null)} onPointerLeave={() => setDrag(null)}>
+          <div className="grid-fade" /><div className="tree-canvas" style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }}>
+            <svg className="connections" viewBox="0 0 1200 1000" aria-hidden="true">{graph.connections.map((edge) => { const { source: from, target: to } = edge; const a = graph.nodes.find((n) => n.id === from)!; const b = graph.nodes.find((n) => n.id === to)!; const active = visible.has(from) && visible.has(to); const isParentChild = parentIds.includes(from as typeof parentIds[number]); const direction = isParentChild ? branchOrder[from as keyof typeof branchOrder] : ''; const parentRadius = 63; const childHalfW = 69; const childHalfH = 37; const rootRadius = 90; let path = ''; if (from === 'root') { const side = Math.abs(b.x - a.x) > Math.abs(b.y - a.y); if (side) { const rootEdge = a.x < b.x ? a.x + rootRadius : a.x - rootRadius; const parentEdge = b.x > a.x ? b.x - parentRadius : b.x + parentRadius; path = `M ${rootEdge} ${a.y} H ${parentEdge}`; } else { const rootEdge = a.y < b.y ? a.y + rootRadius : a.y - rootRadius; const parentEdge = b.y > a.y ? b.y - parentRadius : b.y + parentRadius; path = `M ${a.x} ${rootEdge} V ${parentEdge}`; } } else if (direction === 'up' || direction === 'down') { const isUpward = direction === 'up'; const parentEdge = a.y + (isUpward ? -parentRadius : parentRadius); const childEdge = b.y + (isUpward ? childHalfH : -childHalfH); const railY = parentEdge + (isUpward ? -46 : 46); path = `M ${a.x} ${parentEdge} V ${railY} H ${b.x} V ${childEdge}`; } else { const parentEdge = a.x + (direction === 'right' ? parentRadius : -parentRadius); const childEdge = b.x + (direction === 'right' ? -childHalfW : childHalfW); const railX = parentEdge + (direction === 'right' ? 46 : -46); path = `M ${parentEdge} ${a.y} H ${railX} V ${b.y} H ${childEdge}`; } return <path key={`${from}-${to}`} className={`${active ? 'path-active' : 'path-muted'} ${recommended && (from === 'quant' || to === 'equations') ? 'path-recommended' : ''}`} d={path} /> })}</svg>
+            <div className="root-orbit" /><div className="direction direction-up"><ArrowUp /> LITERASI</div><div className="direction direction-right"><ArrowRight /> PENALARAN</div><div className="direction direction-left"><ArrowLeft /> VERBAL</div><div className="direction direction-down"><ArrowDown /> KUANTITATIF</div>
+            {filteredNodes.map((node) => <NodeCard key={node.id} node={node} selected={selected?.id === node.id} onClick={() => setSelected(node)} recommended={recommended && ['quant', 'equations', 'data'].includes(node.id)} />)}
+          </div>
+          <div className="canvas-hint"><Move /> Drag to explore</div><div className="canvas-controls"><Button variant="outline" size="icon" onClick={() => updateZoom(0.1)} aria-label="Zoom in"><Plus /></Button><span>{Math.round(scale * 100)}%</span><Button variant="outline" size="icon" onClick={() => updateZoom(-0.1)} aria-label="Zoom out"><Minus /></Button><Button variant="outline" size="icon" onClick={resetView} aria-label="Center tree"><Crosshair /></Button></div>
+        </div>
+      </section>
+    </main>
+    {selected && <DetailPanel node={selected} onClose={() => setSelected(null)} />}
+    {selected && <><button className="mobile-detail-backdrop" onClick={() => setSelected(null)} aria-label="Close details" /><div className="mobile-detail"><DetailPanel node={selected} onClose={() => setSelected(null)} /></div></>}
+    <nav className="mobile-nav"><NavItem icon={Home} label="Home" /><NavItem icon={Target} label="Skills" active /><NavItem icon={Zap} label="Drill" /><NavItem icon={Bot} label="AI" /><NavItem icon={UserRound} label="Profile" /></nav>
+  </div>
+}
+
+function NavItem({ icon: Icon, label, active = false }: { icon: typeof Home; label: string; active?: boolean }) { return <button className={`nav-item ${active ? 'active' : ''}`} disabled={!active}><Icon /><span>{label}</span>{active && <i />}</button> }
+function DetailPanel({ node, onClose }: { node: SkillNode; onClose: () => void }) { const meta = statusMeta[node.status]; const Icon = meta.icon; return <aside className="detail-panel"><button className="detail-close" onClick={onClose} aria-label="Close details"><X /></button><div className={`detail-badge badge-${meta.color}`}><Icon /> {meta.label}</div><h2>{node.name.replace('\n', ' ')}</h2><div className="detail-types">{node.type.map((item) => <span key={item}>{item}</span>)}</div><div className="metric-block"><div className="metric-label"><span>Assessment</span><strong>{node.progress ? `${node.progress}%` : 'Not taken'}</strong></div><div className="metric-track"><i style={{ width: `${node.progress || 8}%` }} /></div><small>Assessment proves mastery — practice does not.</small></div><div className="metric-block"><div className="metric-label"><span>Practice</span><strong>{node.practice.split(' · ')[0]}</strong></div><p>{node.practice.split(' · ')[1]}</p></div><div className="detail-list"><span>Used in</span><strong>{node.usedIn}</strong><span>Position</span><strong>{node.direction}</strong><span>Prerequisites</span><strong><Check /> Algebra basics</strong><strong><Check /> Number sense</strong></div><div className="detail-actions"><Button>Practice</Button><Button variant="outline">{node.status === 'needs' ? 'Retest' : 'View performance'}</Button></div></aside> }
+
+export default SkillTreePage
